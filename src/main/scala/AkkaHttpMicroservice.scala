@@ -16,13 +16,22 @@ import java.io.IOException
 import scala.concurrent.{ExecutionContextExecutor, Future}
 import scala.math._
 import spray.json.DefaultJsonProtocol
+import org.apache.spark.sql.SparkSession
 
-case class Hello(hello: String)
-case class SqlQuery(query: String)
+object SqlQuery {
+  def apply(query: String) = {
+    val sparkSession = SparkSession.builder.
+      master("local")
+      .appName("spark session example")
+      .getOrCreate()
+    new SqlQuery(query, sparkSession.sparkContext.uiWebUrl)
+  }
+}
+
+case class SqlQuery(query: String, sparkUi: Option[String])
 
 trait Protocols extends DefaultJsonProtocol {
-  implicit val helloFormat = jsonFormat1(Hello.apply)
-  implicit val sqlQueryFormat = jsonFormat1(SqlQuery.apply)
+  implicit val sqlQueryFormat = jsonFormat2(SqlQuery.apply)
 }
 
 trait Service extends Protocols {
@@ -35,10 +44,10 @@ trait Service extends Protocols {
 
   val routes = {
     logRequestResult("akka-http-microservice") {
-      pathPrefix("hello") {
-        (get & path(Segment)) { hello =>
+      pathPrefix("query") {
+        (get & path(Segment)) { query =>
           complete {
-            Hello(hello)
+            SqlQuery(query)
           }
         } ~
         (post & entity(as[SqlQuery])) { sqlQuery =>
