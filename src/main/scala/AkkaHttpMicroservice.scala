@@ -1,4 +1,8 @@
-import akka.actor.ActorSystem
+import akka.actor._
+import scala.concurrent.Await
+import akka.pattern.ask
+import akka.util.Timeout
+import scala.concurrent.duration._
 import akka.event.{LoggingAdapter, Logging}
 import akka.http.scaladsl.Http
 import akka.http.scaladsl.client.RequestBuilding
@@ -17,14 +21,34 @@ import scala.concurrent.{ExecutionContextExecutor, Future}
 import scala.math._
 import spray.json.DefaultJsonProtocol
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.SparkContext
+import org.apache.spark.SparkConf
+
+object Contexts {
+  val hash = scala.collection.mutable.HashMap.empty[String, SparkContext]
+}
+
+class ContextActor extends Actor {
+  def get(name: String) = {
+    val conf = new SparkConf()
+             .setMaster("local")
+             .setAppName(name)
+             .set("spark.driver.allowMultipleContexts", "true")
+    Contexts.hash.getOrElseUpdate(name, new SparkContext(conf))
+  }
+  def receive = {
+    case name: String => sender ! get(name)
+  }
+}
 
 object SqlQuery {
   def apply(query: String) = {
-    val sparkSession = SparkSession.builder.
-      master("local")
-      .appName("spark session example")
-      .getOrCreate()
-    new SqlQuery(query, sparkSession.sparkContext.uiWebUrl)
+    val system = ActorSystem("test")
+    implicit val timeout = Timeout(5 seconds)
+    val contextActor = system.actorOf(Props[ContextActor], name = "contextActor")
+    val future = ask(contextActor, query).mapTo[SparkContext]
+    val sc = Await.result(future, timeout.duration).asInstanceOf[SparkContext]
+    new SqlQuery(query, sc.uiWebUrl)
   }
 }
 
